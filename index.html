@@ -1,0 +1,1583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#00ff41">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="Bidirectional offline Morse code translator: decode mic/camera/text Morse to English & Arabic, and encode Arabic/English to Morse via sound, torch, or text.">
+<link rel="manifest" href="manifest.json">
+<title>MORSE TERMINAL</title>
+<style>
+  :root{
+    --bg:#000000; --green:#00ff41; --green-dim:#00aa2b; --green-dark:#003d0f;
+    --amber:#ffb000; --red:#ff4400; --panel:#020a02; --line:#0c4a14;
+    --mono:"Courier New",Courier,"Lucida Console",monospace;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--green);
+    font-family:var(--mono);font-size:15px;line-height:1.45;}
+  body{
+    background-color:#000;
+    background-image:radial-gradient(rgba(0,255,65,0.10) 1px, transparent 1px);
+    background-size:22px 22px;
+    min-height:100vh; overflow-x:hidden;
+  }
+  /* CRT scan-line overlay */
+  body::before{
+    content:""; position:fixed; inset:0; z-index:9000; pointer-events:none;
+    background:repeating-linear-gradient(0deg,
+      rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px,
+      rgba(0,255,65,0.035) 3px, rgba(0,255,65,0.035) 4px);
+    animation:scan 8s linear infinite;
+  }
+  @keyframes scan{0%{background-position:0 0;}100%{background-position:0 100px;}}
+  body::after{ /* soft vignette */
+    content:""; position:fixed; inset:0; z-index:8999; pointer-events:none;
+    background:radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.55) 100%);
+  }
+  ::selection{background:var(--green);color:#000;}
+
+  .wrap{max-width:480px;margin:0 auto;padding:10px 12px 28px;position:relative;z-index:1;}
+
+  /* ---------- status bar ---------- */
+  .statusbar{
+    display:flex;align-items:center;gap:8px;border:1px solid var(--line);
+    background:var(--panel);padding:7px 10px;border-radius:4px;
+    box-shadow:0 0 8px rgba(0,255,65,0.25);margin-bottom:10px;font-size:13px;
+    letter-spacing:1px;
+  }
+  .statusbar .dot{width:10px;height:10px;border-radius:50%;background:var(--green);
+    box-shadow:0 0 8px var(--green);animation:blink 1.4s steps(1) infinite;}
+  .statusbar.listening .dot{background:var(--amber);box-shadow:0 0 8px var(--amber);animation-duration:.6s;}
+  .statusbar.tx .dot{background:var(--green);box-shadow:0 0 10px var(--green);animation-duration:.3s;}
+  .statusbar.err .dot{background:var(--red);box-shadow:0 0 8px var(--red);}
+  @keyframes blink{0%,49%{opacity:1;}50%,100%{opacity:.15;}}
+  .statusbar .spacer{flex:1;}
+  .iconbtn{background:var(--panel);border:1px solid var(--line);color:var(--green);
+    font-family:var(--mono);font-size:12px;padding:6px 8px;border-radius:4px;cursor:pointer;}
+  .iconbtn:active{background:var(--green-dark);}
+
+  /* ---------- header ---------- */
+  header h1{
+    font-size:26px;letter-spacing:4px;margin:4px 0 2px;text-align:center;
+    text-shadow:0 0 6px var(--green),0 0 14px rgba(0,255,65,.5);
+    animation:flicker 4.5s infinite;
+  }
+  header .sub{text-align:center;font-size:11px;color:var(--green-dim);letter-spacing:3px;
+    margin-bottom:12px;}
+  @keyframes flicker{
+    0%,19%,21%,23%,80%,100%{opacity:1;}20%{opacity:.55;}22%{opacity:.78;}
+    81%{opacity:.6;}82%{opacity:.92;}
+  }
+
+  /* ---------- tabs ---------- */
+  .tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:14px;}
+  .tab{min-height:48px;background:var(--panel);border:1px solid var(--line);
+    color:var(--green-dim);font-family:var(--mono);font-size:11px;letter-spacing:.5px;
+    border-radius:4px;cursor:pointer;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:2px;padding:4px 2px;}
+  .tab .ic{font-size:18px;line-height:1;}
+  .tab.active{color:var(--green);border-color:var(--green);
+    box-shadow:0 0 8px rgba(0,255,65,.45);background:#021502;
+    text-shadow:0 0 6px var(--green);}
+  .tab:active{background:var(--green-dark);}
+
+  .panel{display:none;animation:fadein .25s ease;}
+  .panel.active{display:block;}
+  @keyframes fadein{from{opacity:0;}to{opacity:1;}}
+
+  .card{border:1px solid var(--line);background:var(--panel);border-radius:6px;
+    padding:12px;margin-bottom:12px;box-shadow:0 0 6px rgba(0,255,65,.12);}
+  .card h2{font-size:13px;letter-spacing:2px;margin:0 0 10px;color:var(--green);
+    text-shadow:0 0 5px rgba(0,255,65,.5);border-bottom:1px solid var(--line);
+    padding-bottom:6px;}
+  .hint{font-size:11px;color:var(--green-dim);letter-spacing:.3px;margin:6px 0 0;}
+
+  /* mode selector (3 icon toggles) */
+  .modesel{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:12px;}
+  .modebtn,.outbtn,.sosmethod{min-height:48px;background:var(--panel);
+    border:1px solid var(--line);color:var(--green-dim);font-family:var(--mono);
+    font-size:11px;border-radius:4px;cursor:pointer;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:3px;letter-spacing:.5px;}
+  .modebtn .ic,.outbtn .ic,.sosmethod .ic{font-size:18px;}
+  .modebtn.active,.outbtn.active,.sosmethod.active{color:var(--green);
+    border-color:var(--green);box-shadow:0 0 8px rgba(0,255,65,.4);background:#021502;}
+  .modebtn:active,.outbtn:active,.sosmethod:active{background:var(--green-dark);}
+
+  /* permission badges + messages */
+  .modebtn,.outbtn{position:relative;}
+  .permbadge{position:absolute;top:3px;right:5px;font-size:11px;line-height:1;
+    font-weight:bold;text-shadow:0 0 4px currentColor;}
+  .permbadge.ok{color:var(--green);}
+  .permbadge.warn{color:var(--amber);}
+  .permbadge.no{color:var(--red);}
+  .modebtn.disabled,.outbtn.disabled{opacity:.4;filter:grayscale(.4);
+    pointer-events:none;}
+  .permmsg{margin-top:8px;border:1px solid var(--red);background:#180400;
+    color:#ff8a63;padding:8px 10px;border-radius:4px;font-size:12px;line-height:1.55;
+    direction:rtl;text-align:right;}
+  .permmsg.warn-box{border-color:var(--amber);color:var(--amber);background:#160f00;}
+  .permmsg .lnk{color:var(--green);text-decoration:underline;cursor:pointer;
+    pointer-events:auto;letter-spacing:.3px;}
+  .permmsg.hidden{display:none;}
+
+  .submode{display:none;}
+  .submode.active{display:block;}
+
+  /* generic button */
+  button.act{width:100%;min-height:48px;background:#021a06;border:1px solid var(--green);
+    color:var(--green);font-family:var(--mono);font-size:14px;letter-spacing:2px;
+    border-radius:5px;cursor:pointer;text-shadow:0 0 5px rgba(0,255,65,.6);
+    box-shadow:0 0 8px rgba(0,255,65,.25);margin-top:8px;}
+  button.act:active{background:var(--green-dark);box-shadow:0 0 14px rgba(0,255,65,.5);}
+  button.act.ghost{background:var(--panel);border-color:var(--line);color:var(--green-dim);
+    text-shadow:none;box-shadow:none;}
+  button.act.danger{border-color:var(--red);color:var(--red);text-shadow:0 0 5px rgba(255,68,0,.6);
+    box-shadow:0 0 8px rgba(255,68,0,.25);}
+  button.act.danger:active{background:#2a0a00;}
+  .btnrow{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .btnrow3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+
+  textarea,input[type=text]{width:100%;background:#010801;border:1px solid var(--line);
+    color:var(--green);font-family:var(--mono);font-size:15px;padding:10px;border-radius:5px;
+    resize:vertical;letter-spacing:1px;}
+  textarea{min-height:90px;}
+  textarea:focus,input:focus{outline:none;border-color:var(--green);
+    box-shadow:0 0 8px rgba(0,255,65,.4);}
+
+  /* sliders */
+  .slider-wrap{margin:12px 0;}
+  .slider-wrap label{display:flex;justify-content:space-between;font-size:12px;
+    letter-spacing:1px;margin-bottom:6px;color:var(--green-dim);}
+  .slider-wrap .val{color:var(--green);text-shadow:0 0 5px rgba(0,255,65,.6);font-size:14px;}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:6px;
+    background:var(--green-dark);border-radius:3px;outline:none;border:1px solid var(--line);}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
+    width:22px;height:22px;border-radius:50%;background:var(--green);cursor:pointer;
+    box-shadow:0 0 8px var(--green);border:2px solid #000;}
+  input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;
+    background:var(--green);cursor:pointer;box-shadow:0 0 8px var(--green);border:2px solid #000;}
+
+  /* level meter */
+  .meter{height:14px;background:#010801;border:1px solid var(--line);border-radius:3px;
+    overflow:hidden;margin-top:8px;}
+  .meter .fill{height:100%;width:0%;background:linear-gradient(90deg,var(--green-dark),var(--green));
+    box-shadow:0 0 8px var(--green);transition:width .05s linear;}
+  .meter.over .fill{background:var(--amber);box-shadow:0 0 8px var(--amber);}
+
+  canvas.viz{width:100%;height:90px;background:#010801;border:1px solid var(--line);
+    border-radius:5px;display:block;}
+  video.cam{width:100%;max-height:200px;background:#000;border:1px solid var(--line);
+    border-radius:5px;display:block;object-fit:cover;}
+  .raw{font-size:18px;letter-spacing:3px;min-height:30px;color:var(--green);
+    background:#010801;border:1px solid var(--line);border-radius:4px;padding:8px;
+    margin-top:8px;word-break:break-all;direction:ltr;text-align:left;}
+
+  /* output triple layer */
+  .layer{margin-top:10px;}
+  .layer .lbl{font-size:10px;letter-spacing:2px;color:var(--green-dim);margin-bottom:4px;
+    display:flex;justify-content:space-between;align-items:center;}
+  .layer .copy{font-size:10px;border:1px solid var(--line);background:var(--panel);
+    color:var(--green-dim);padding:3px 7px;border-radius:3px;cursor:pointer;letter-spacing:1px;}
+  .layer .copy:active{background:var(--green-dark);color:var(--green);}
+  .layer .box{background:#010801;border:1px solid var(--line);border-radius:4px;padding:9px;
+    min-height:24px;word-break:break-word;}
+  .box.morse{letter-spacing:3px;font-size:16px;direction:ltr;text-align:left;color:var(--green);}
+  .box.eng{direction:ltr;text-align:left;letter-spacing:1px;}
+  .box.ar{direction:rtl;text-align:right;font-size:18px;line-height:1.7;}
+  .notrans{color:var(--amber);font-size:13px;}
+
+  /* reference grid */
+  .reftoggle{cursor:pointer;user-select:none;}
+  .refgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-top:10px;}
+  .refgrid.hidden{display:none;}
+  .refcell{border:1px solid var(--line);border-radius:3px;padding:5px 4px;text-align:center;
+    background:#010801;}
+  .refcell .c{font-size:15px;color:var(--green);text-shadow:0 0 4px rgba(0,255,65,.5);}
+  .refcell .m{font-size:11px;color:var(--green-dim);letter-spacing:2px;}
+
+  /* history */
+  .log{max-height:55vh;overflow-y:auto;border:1px solid var(--line);border-radius:5px;
+    background:#010801;padding:6px;}
+  .logentry{border-bottom:1px dashed var(--line);padding:8px 4px;cursor:pointer;}
+  .logentry:last-child{border-bottom:none;}
+  .logentry:active{background:var(--green-dark);}
+  .logentry .top{font-size:10px;color:var(--green-dim);letter-spacing:1px;
+    display:flex;justify-content:space-between;}
+  .logentry .lm{font-size:13px;letter-spacing:2px;color:var(--green);direction:ltr;
+    word-break:break-all;margin:2px 0;}
+  .logentry .le{font-size:13px;direction:ltr;}
+  .logentry .la{font-size:14px;direction:rtl;text-align:right;color:var(--green-dim);}
+  .empty{text-align:center;color:var(--green-dim);padding:24px 8px;letter-spacing:1px;font-size:12px;}
+
+  /* SOS */
+  .sosgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0 12px;}
+  .sosbtn{min-height:56px;background:#1a0a00;border:1px solid var(--red);color:#ffb38a;
+    font-family:var(--mono);font-size:13px;letter-spacing:1px;border-radius:5px;cursor:pointer;
+    text-shadow:0 0 6px rgba(255,68,0,.5);box-shadow:0 0 8px rgba(255,68,0,.2);
+    padding:6px;display:flex;align-items:center;justify-content:center;text-align:center;}
+  .sosbtn:active{background:#2e0f00;}
+  .sosbig{min-height:90px;font-size:40px;letter-spacing:8px;background:#1a0500;
+    border:2px solid var(--red);color:#ff7a45;border-radius:8px;cursor:pointer;
+    width:100%;font-family:var(--mono);text-shadow:0 0 12px var(--red);
+    animation:sospulse 1.1s ease-in-out infinite;margin-bottom:12px;}
+  @keyframes sospulse{0%,100%{box-shadow:0 0 8px rgba(255,68,0,.4);}
+    50%{box-shadow:0 0 26px rgba(255,68,0,.85);border-color:var(--amber);}}
+
+  /* transmit overlay / visualizer */
+  .tx-overlay{position:fixed;inset:0;z-index:9500;display:none;flex-direction:column;
+    align-items:center;justify-content:center;gap:18px;background:rgba(0,0,0,.78);
+    backdrop-filter:blur(2px);}
+  .tx-overlay.show{display:flex;}
+  .vis-circle{width:min(70vw,300px);height:min(70vw,300px);border-radius:50%;
+    background:#020a02;border:2px solid var(--green-dark);transition:none;}
+  .vis-circle.on{background:var(--green);box-shadow:0 0 60px 12px var(--green),0 0 120px 30px rgba(0,255,65,.5);
+    border-color:var(--green);}
+  .now-line{font-size:13px;letter-spacing:2px;color:var(--green-dim);text-align:center;
+    max-width:90vw;word-break:break-word;direction:ltr;padding:0 16px;min-height:20px;}
+  .now-line .now-letter{opacity:.4;}
+  .now-line .now-letter.active{opacity:1;color:var(--green);text-shadow:0 0 8px var(--green);
+    font-weight:bold;}
+  .now-big{font-size:48px;color:var(--green);text-shadow:0 0 14px var(--green);min-height:54px;}
+  .flash-overlay{position:fixed;inset:0;z-index:9400;display:none;background:#000;}
+  .flash-overlay.show{display:block;}
+  .flash-overlay.on{background:var(--green);box-shadow:inset 0 0 200px rgba(0,255,65,.6);}
+
+  /* toast */
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);
+    background:#021502;border:1px solid var(--green);color:var(--green);padding:10px 18px;
+    border-radius:5px;font-size:13px;letter-spacing:1px;z-index:9999;opacity:0;
+    transition:.25s;box-shadow:0 0 12px rgba(0,255,65,.4);max-width:90vw;text-align:center;
+    pointer-events:none;}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+  .toast.bad{border-color:var(--red);color:#ff8a5a;box-shadow:0 0 12px rgba(255,68,0,.4);}
+
+  :focus-visible{outline:2px solid var(--green);outline-offset:2px;}
+
+  @media (prefers-reduced-motion: reduce){
+    body::before,header h1,.sosbig{animation:none!important;}
+    .statusbar .dot{animation:none!important;opacity:1!important;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="statusbar" id="statusbar">
+    <span class="dot"></span>
+    <span id="statusText">● READY</span>
+    <span class="spacer"></span>
+    <button class="iconbtn" id="installBtn" title="Install app">📲 INSTALL</button>
+    <button class="iconbtn" id="shareBtn" title="Share">📤</button>
+  </div>
+
+  <header>
+    <h1>MORSE TERMINAL</h1>
+    <div class="sub">// OFFLINE SIGNAL DECODER &amp; TRANSMITTER //</div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="decode"><span class="ic">📡</span>DECODE</button>
+    <button class="tab" data-tab="encode"><span class="ic">📤</span>ENCODE</button>
+    <button class="tab" data-tab="history"><span class="ic">📜</span>HISTORY</button>
+    <button class="tab" data-tab="sos"><span class="ic">🆘</span>SOS</button>
+  </nav>
+
+  <!-- ============ DECODE ============ -->
+  <section class="panel active" id="tab-decode">
+    <div class="modesel">
+      <button class="modebtn active" data-mode="mic"><span class="ic">🎙️</span>MIC<span class="permbadge warn" id="micBadge" title="not requested">⚠</span></button>
+      <button class="modebtn" data-mode="cam"><span class="ic">📷</span>CAMERA<span class="permbadge warn" id="camBadge" title="not requested">⚠</span></button>
+      <button class="modebtn" data-mode="text"><span class="ic">⌨️</span>TEXT</button>
+    </div>
+
+    <!-- MIC -->
+    <div class="submode active" id="mode-mic">
+      <div class="card">
+        <h2>AUDIO MORSE :: MICROPHONE</h2>
+        <canvas class="viz" id="micCanvas" width="456" height="90"></canvas>
+        <div class="meter" id="micMeter"><div class="fill" id="micFill"></div></div>
+        <div class="slider-wrap">
+          <label>SENSITIVITY (THRESHOLD) <span class="val" id="sensMicVal">0.06</span></label>
+          <input type="range" id="sensMic" min="1" max="40" value="6">
+        </div>
+        <div class="raw" id="micRaw">—</div>
+        <div class="btnrow">
+          <button class="act" id="micStart">● LISTEN</button>
+          <button class="act ghost" id="micStop">■ STOP</button>
+        </div>
+        <button class="act ghost" id="micDecode">⏎ DECODE NOW</button>
+        <p class="hint">Tap LISTEN, then play steady beeps. Short=dot, long=dash. Auto-decodes after a pause. Needs mic permission (HTTPS).</p>
+        <div class="permmsg hidden" id="micPermMsg"></div>
+      </div>
+    </div>
+
+    <!-- CAMERA -->
+    <div class="submode" id="mode-cam">
+      <div class="card">
+        <h2>LIGHT MORSE :: CAMERA</h2>
+        <video class="cam" id="camVideo" playsinline muted></video>
+        <canvas id="camCanvas" width="64" height="48" style="display:none;"></canvas>
+        <div class="meter" id="camMeter"><div class="fill" id="camFill"></div></div>
+        <div class="slider-wrap">
+          <label>BRIGHTNESS THRESHOLD <span class="val" id="sensCamVal">0.50</span></label>
+          <input type="range" id="sensCam" min="5" max="95" value="50">
+        </div>
+        <div class="raw" id="camRaw">—</div>
+        <div class="btnrow">
+          <button class="act" id="camStart">● WATCH</button>
+          <button class="act ghost" id="camStop">■ STOP</button>
+        </div>
+        <button class="act ghost" id="camDecode">⏎ DECODE NOW</button>
+        <p class="hint">Point rear camera at a blinking light / torch. Set threshold above ambient so the bar fills only on flashes. Needs camera permission (HTTPS).</p>
+        <div class="permmsg hidden" id="camPermMsg"></div>
+      </div>
+    </div>
+
+    <!-- TEXT -->
+    <div class="submode" id="mode-text">
+      <div class="card">
+        <h2>MANUAL MORSE :: TEXT</h2>
+        <textarea id="morseInput" placeholder=". - / accepted&#10;e.g.  ... --- ...   /   .... . .-.. .--."></textarea>
+        <div class="btnrow">
+          <button class="act" id="decodeTextBtn">⏎ DECODE</button>
+          <button class="act ghost" id="clearDecodeBtn">CLEAR</button>
+        </div>
+        <p class="hint">Dot: . or •  |  Dash: - or —  |  Letter gap: space  |  Word gap: / or triple-space</p>
+      </div>
+    </div>
+
+    <!-- DECODE OUTPUT -->
+    <div class="card">
+      <h2>OUTPUT</h2>
+      <div class="layer">
+        <div class="lbl"><span>▸ MORSE</span><button class="copy" data-copy="dec-morse">COPY</button></div>
+        <div class="box morse" id="dec-morse">—</div>
+      </div>
+      <div class="layer">
+        <div class="lbl"><span>▸ ENGLISH</span><button class="copy" data-copy="dec-en">COPY</button></div>
+        <div class="box eng" id="dec-en">—</div>
+      </div>
+      <div class="layer">
+        <div class="lbl"><span>▸ ARABIC / عربي</span><button class="copy" data-copy="dec-ar">COPY</button></div>
+        <div class="box ar" id="dec-ar">—</div>
+      </div>
+    </div>
+
+    <!-- REFERENCE -->
+    <div class="card">
+      <h2 class="reftoggle" id="refToggle">▸ MORSE REFERENCE [ TAP ]</h2>
+      <div class="refgrid hidden" id="refGrid"></div>
+    </div>
+  </section>
+
+  <!-- ============ ENCODE ============ -->
+  <section class="panel" id="tab-encode">
+    <div class="card">
+      <h2>TEXT INPUT :: AR / EN</h2>
+      <textarea id="encInput" placeholder="Type English or Arabic…&#10;اكتب بالعربية أو الإنجليزية"></textarea>
+      <p class="hint">Real dictionary translation: Arabic → English, English → Arabic. Morse is built from the English/Latin layer.</p>
+    </div>
+
+    <div class="card">
+      <h2>OUTPUT MODE</h2>
+      <div class="modesel">
+        <button class="outbtn active" data-out="text"><span class="ic">📝</span>TEXT</button>
+        <button class="outbtn" data-out="sound"><span class="ic">🔊</span>SOUND</button>
+        <button class="outbtn" data-out="light"><span class="ic">💡</span>LIGHT<span class="permbadge warn" id="torchBadge" title="not requested">⚠</span></button>
+      </div>
+
+      <div class="slider-wrap">
+        <label>SPEED (WPM) <span class="val" id="wpmVal">13</span></label>
+        <input type="range" id="wpm" min="5" max="30" value="13">
+      </div>
+      <div class="btnrow3">
+        <button class="act ghost" data-wpm="5">SLOW 5</button>
+        <button class="act ghost" data-wpm="13">NORM 13</button>
+        <button class="act ghost" data-wpm="25">FAST 25</button>
+      </div>
+      <div class="slider-wrap">
+        <label>PITCH (Hz) <span class="val" id="pitchVal">600</span></label>
+        <input type="range" id="pitch" min="400" max="800" value="600">
+      </div>
+
+      <button class="act" id="txBtn">▶ TRANSMIT</button>
+      <p class="hint" id="outHint">TEXT mode just shows the translation below. SOUND beeps it. LIGHT uses torch (or a green flash if no torch).</p>
+      <div class="permmsg hidden" id="torchPermMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>OUTPUT</h2>
+      <div class="layer">
+        <div class="lbl"><span>▸ MORSE</span><button class="copy" data-copy="enc-morse">COPY</button></div>
+        <div class="box morse" id="enc-morse">—</div>
+      </div>
+      <div class="layer">
+        <div class="lbl"><span>▸ ENGLISH / LATIN</span><button class="copy" data-copy="enc-en">COPY</button></div>
+        <div class="box eng" id="enc-en">—</div>
+      </div>
+      <div class="layer">
+        <div class="lbl"><span>▸ ARABIC / عربي</span><button class="copy" data-copy="enc-ar">COPY</button></div>
+        <div class="box ar" id="enc-ar">—</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ HISTORY ============ -->
+  <section class="panel" id="tab-history">
+    <div class="card">
+      <h2>TRANSLATION LOG :: LAST 50</h2>
+      <div class="log" id="historyLog"></div>
+      <button class="act danger" id="clearHistory">🗑 CLEAR LOG</button>
+    </div>
+  </section>
+
+  <!-- ============ SOS ============ -->
+  <section class="panel" id="tab-sos">
+    <div class="card">
+      <h2>EMERGENCY TRANSMIT</h2>
+      <button class="sosbig" id="sosBig">SOS</button>
+      <div class="modesel">
+        <button class="sosmethod active" data-method="sound"><span class="ic">🔊</span>SOUND</button>
+        <button class="sosmethod" data-method="light"><span class="ic">💡</span>LIGHT</button>
+      </div>
+      <div class="sosgrid" id="sosGrid"></div>
+      <h2>CUSTOM MESSAGE</h2>
+      <input type="text" id="sosCustom" placeholder="Type emergency message…">
+      <button class="act danger" id="sosTransmit">▶ TRANSMIT</button>
+      <p class="hint">Repeats the signal 3× for SOS visibility. Uses the WPM/pitch set in ENCODE.</p>
+    </div>
+  </section>
+
+</div>
+
+<!-- transmit overlay -->
+<div class="flash-overlay" id="flashOverlay"></div>
+<div class="tx-overlay" id="txOverlay">
+  <div class="now-big" id="nowBig">—</div>
+  <div class="vis-circle" id="visualizer"></div>
+  <div class="now-line" id="nowPlaying"></div>
+  <button class="act danger" id="txClose" style="max-width:200px;">■ STOP</button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* =====================================================================
+   MORSE TERMINAL — single-file offline PWA
+   ===================================================================== */
+
+/* ---------- ITU-R Morse dictionary ---------- */
+const MORSE = {
+  A:".-",B:"-...",C:"-.-.",D:"-..",E:".",F:"..-.",G:"--.",H:"....",I:"..",
+  J:".---",K:"-.-",L:".-..",M:"--",N:"-.",O:"---",P:".--.",Q:"--.-",R:".-.",
+  S:"...",T:"-",U:"..-",V:"...-",W:".--",X:"-..-",Y:"-.--",Z:"--..",
+  "0":"-----","1":".----","2":"..---","3":"...--","4":"....-","5":".....",
+  "6":"-....","7":"--...","8":"---..","9":"----.",
+  ".":".-.-.-",",":"--..--","?":"..--..","'":".----.","!":"-.-.--","/":"-..-.",
+  "(":"-.--.",")":"-.--.-","&":".-...",":":"---...",";":"-.-.-.","=":"-...-",
+  "+":".-.-.","-":"-....-","_":"..--.-","\"":".-..-.","$":"...-..-","@":".--.-.",
+  " ":"/"
+};
+const REV_MORSE = {};
+for (const k in MORSE){ if (k !== " ") REV_MORSE[MORSE[k]] = k; }
+
+/* ---------- Arabic normalization + fuzzy matching ---------- */
+function normAr(s){
+  return String(s)
+    .replace(/[\u064B-\u0652\u0670\u0640]/g,"")   /* tashkeel + tatweel */
+    .replace(/[أإآٱ]/g,"ا")
+    .replace(/ى/g,"ي")
+    .replace(/ؤ/g,"و")
+    .replace(/ئ/g,"ي")
+    .replace(/ة/g,"ه")
+    .trim();
+}
+function normDigits(s){
+  return String(s).replace(/[٠-٩]/g, d => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString());
+}
+function lev(a,b){
+  const m=a.length, n=b.length;
+  if(!m) return n; if(!n) return m;
+  if(Math.abs(m-n) > 2) return 3;
+  let prev=new Array(n+1), cur=new Array(n+1);
+  for(let j=0;j<=n;j++) prev[j]=j;
+  for(let i=1;i<=m;i++){
+    cur[0]=i;
+    for(let j=1;j<=n;j++){
+      const cost = a.charCodeAt(i-1)===b.charCodeAt(j-1)?0:1;
+      cur[j]=Math.min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost);
+    }
+    const t=prev; prev=cur; cur=t;
+  }
+  return prev[n];
+}
+function fuzzy(word, keys){
+  const thr = word.length<=6 ? 1 : 2;
+  let best=null, bd=99;
+  for(let i=0;i<keys.length;i++){
+    const k=keys[i];
+    if(Math.abs(k.length-word.length)>thr) continue;
+    const d=lev(word,k);
+    if(d<bd){ bd=d; best=k; if(d===0) break; }
+  }
+  return bd<=thr ? best : null;
+}
+
+/* ---------- bidirectional dictionary (English -> Arabic, 300+ pairs) ---------- */
+const DICT = {
+  i:"أنا",you:"أنت",he:"هو",she:"هي",we:"نحن",they:"هم",it:"هو",me:"أنا",
+  my:"ملكي",your:"لك",his:"له",her:"لها",our:"لنا",their:"لهم",whose:"لمن",
+  this:"هذا",that:"ذلك",these:"هؤلاء",those:"أولئك",
+  who:"من",what:"ماذا",where:"أين",when:"متى",why:"لماذا",how:"كيف",which:"أي",
+  hello:"مرحبا",hi:"أهلا",hey:"يا",goodbye:"وداعا",bye:"مع السلامة",
+  please:"من فضلك",thanks:"شكرا",thank:"شكرا",welcome:"أهلا وسهلا",sorry:"آسف",
+  excuse:"عذرا",yes:"نعم",no:"لا",ok:"حسنا",okay:"حسنا",sure:"أكيد",maybe:"ربما",
+  congratulations:"مبروك",cheers:"بصحتك",
+  is:"يكون",are:"يكونون",am:"أكون",be:"يكون",was:"كان",were:"كانوا",
+  have:"يملك",has:"يملك",had:"كان لديه",do:"يفعل",does:"يفعل",did:"فعل",
+  will:"سوف",can:"يستطيع",could:"استطاع",should:"يجب",must:"يجب",may:"قد",might:"قد",
+  go:"يذهب",going:"ذاهب",went:"ذهب",come:"يأتي",coming:"قادم",came:"أتى",
+  see:"يرى",saw:"رأى",look:"ينظر",want:"يريد",need:"يحتاج",get:"يحصل",give:"يعطي",
+  take:"يأخذ",make:"يصنع",know:"يعرف",think:"يفكر",say:"يقول",said:"قال",
+  tell:"يخبر",ask:"يسأل",work:"يعمل",help:"يساعد",call:"يتصل",find:"يجد",found:"وجد",
+  feel:"يشعر",try:"يحاول",use:"يستخدم",eat:"يأكل",drink:"يشرب",sleep:"ينام",
+  run:"يجري",walk:"يمشي",stop:"يتوقف",start:"يبدأ",wait:"ينتظر",open:"يفتح",
+  close:"يغلق",read:"يقرأ",write:"يكتب",send:"يرسل",speak:"يتحدث",talk:"يتكلم",
+  understand:"يفهم",learn:"يتعلم",teach:"يعلم",live:"يعيش",love:"يحب",like:"يعجب",
+  hate:"يكره",play:"يلعب",win:"يفوز",lose:"يخسر",buy:"يشتري",sell:"يبيع",pay:"يدفع",
+  cost:"يكلف",drive:"يقود",fly:"يطير",sit:"يجلس",stand:"يقف",move:"يتحرك",turn:"يدور",
+  bring:"يحضر",put:"يضع",keep:"يحتفظ",leave:"يغادر",follow:"يتبع",change:"يغير",
+  show:"يظهر",hear:"يسمع",listen:"يستمع",watch:"يشاهد",meet:"يقابل",save:"ينقذ",
+  wear:"يلبس",cook:"يطبخ",wash:"يغسل",build:"يبني",break:"يكسر",fix:"يصلح",cut:"يقطع",
+  carry:"يحمل",push:"يدفع",pull:"يسحب",throw:"يرمي",catch:"يمسك",hold:"يمسك",
+  lift:"يرفع",jump:"يقفز",fall:"يسقط",rise:"يرتفع",wake:"يستيقظ",smile:"يبتسم",
+  cry:"يبكي",laugh:"يضحك",hope:"يأمل",wish:"يتمنى",remember:"يتذكر",forget:"ينسى",
+  count:"يعد",draw:"يرسم",sing:"يغني",dance:"يرقص",decide:"يقرر",agree:"يوافق",
+  refuse:"يرفض",allow:"يسمح",stay:"يبقى",return:"يعود",arrive:"يصل",enter:"يدخل",
+  water:"ماء",food:"طعام",bread:"خبز",milk:"حليب",tea:"شاي",coffee:"قهوة",rice:"أرز",
+  meat:"لحم",fruit:"فاكهة",sugar:"سكر",salt:"ملح",oil:"زيت",house:"منزل",home:"بيت",
+  room:"غرفة",car:"سيارة",bus:"حافلة",train:"قطار",plane:"طائرة",road:"طريق",
+  street:"شارع",bridge:"جسر",time:"وقت",day:"يوم",night:"ليل",morning:"صباح",
+  evening:"مساء",noon:"ظهر",week:"أسبوع",month:"شهر",year:"سنة",hour:"ساعة",
+  minute:"دقيقة",second:"ثانية",today:"اليوم",tomorrow:"غدا",yesterday:"أمس",
+  man:"رجل",woman:"امرأة",boy:"ولد",girl:"بنت",child:"طفل",baby:"رضيع",people:"ناس",
+  friend:"صديق",family:"عائلة",mother:"أم",father:"أب",brother:"أخ",sister:"أخت",
+  son:"ابن",daughter:"ابنة",husband:"زوج",wife:"زوجة",neighbor:"جار",name:"اسم",
+  age:"عمر",money:"مال",price:"سعر",market:"سوق",shop:"متجر",phone:"هاتف",
+  computer:"حاسوب",internet:"إنترنت",key:"مفتاح",door:"باب",window:"نافذة",wall:"جدار",
+  table:"طاولة",chair:"كرسي",bed:"سرير",school:"مدرسة",teacher:"معلم",student:"طالب",
+  book:"كتاب",pen:"قلم",paper:"ورق",word:"كلمة",letter:"رسالة",number:"رقم",page:"صفحة",
+  job:"وظيفة",office:"مكتب",company:"شركة",city:"مدينة",town:"بلدة",village:"قرية",
+  country:"بلد",world:"عالم",place:"مكان",area:"منطقة",map:"خريطة",hand:"يد",foot:"قدم",
+  leg:"ساق",arm:"ذراع",eye:"عين",ear:"أذن",nose:"أنف",mouth:"فم",head:"رأس",hair:"شعر",
+  face:"وجه",heart:"قلب",blood:"دم",bone:"عظم",skin:"جلد",body:"جسم",mind:"عقل",
+  soul:"روح",life:"حياة",death:"موت",health:"صحة",problem:"مشكلة",solution:"حل",
+  question:"سؤال",answer:"جواب",idea:"فكرة",plan:"خطة",reason:"سبب",result:"نتيجة",
+  way:"طريقة",thing:"شيء",story:"قصة",news:"خبر",truth:"حقيقة",secret:"سر",dream:"حلم",
+  fear:"خوف",light:"ضوء",dark:"ظلام",color:"لون",fire:"نار",air:"هواء",wind:"ريح",
+  rain:"مطر",snow:"ثلج",ice:"جليد",sun:"شمس",moon:"قمر",star:"نجمة",sky:"سماء",
+  cloud:"سحابة",earth:"أرض",ground:"أرضية",sea:"بحر",ocean:"محيط",lake:"بحيرة",
+  river:"نهر",mountain:"جبل",hill:"تل",desert:"صحراء",forest:"غابة",tree:"شجرة",
+  plant:"نبات",flower:"زهرة",grass:"عشب",leaf:"ورقة",seed:"بذرة",animal:"حيوان",
+  dog:"كلب",cat:"قطة",bird:"طائر",fish:"سمك",horse:"حصان",cow:"بقرة",sheep:"خروف",
+  goat:"ماعز",chicken:"دجاجة",lion:"أسد",snake:"ثعبان",insect:"حشرة",
+  doctor:"طبيب",nurse:"ممرضة",hospital:"مستشفى",clinic:"عيادة",medicine:"دواء",
+  pill:"حبة",ambulance:"إسعاف",police:"شرطة",soldier:"جندي",army:"جيش",gun:"سلاح",
+  danger:"خطر",emergency:"طوارئ",rescue:"إنقاذ",accident:"حادث",injury:"إصابة",
+  injured:"مصاب",wound:"جرح",pain:"ألم",sick:"مريض",disease:"مرض",fever:"حمى",
+  cough:"سعال",burn:"حرق",safe:"آمن",safety:"أمان",shelter:"ملجأ",escape:"هروب",
+  trapped:"محاصر",lost:"ضائع",alarm:"إنذار",signal:"إشارة",message:"رسالة",
+  distress:"استغاثة",
+  good:"جيد",bad:"سيء",great:"عظيم",nice:"لطيف",kind:"طيب",big:"كبير",large:"ضخم",
+  small:"صغير",little:"ضئيل",new:"جديد",old:"قديم",young:"شاب",hot:"حار",cold:"بارد",
+  warm:"دافئ",cool:"رائع",happy:"سعيد",sad:"حزين",angry:"غاضب",afraid:"خائف",
+  tired:"متعب",hungry:"جائع",thirsty:"عطشان",fast:"سريع",slow:"بطيء",easy:"سهل",
+  hard:"صعب",difficult:"عسير",simple:"بسيط",high:"عالي",low:"منخفض",long:"طويل",
+  short:"قصير",tall:"فارع",wide:"واسع",narrow:"ضيق",deep:"عميق",heavy:"ثقيل",
+  strong:"قوي",weak:"ضعيف",rich:"غني",poor:"فقير",full:"ممتلئ",empty:"فارغ",
+  dirty:"متسخ",tidy:"مرتب",correct:"صحيح",wrong:"خطأ",true:"حقيقي",false:"زائف",
+  beautiful:"جميل",ugly:"قبيح",ready:"جاهز",important:"مهم",free:"حر",busy:"مشغول",
+  closed:"مغلق",dead:"ميت",alive:"حي",possible:"ممكن",near:"قريب",far:"بعيد",
+  one:"واحد",two:"اثنان",three:"ثلاثة",four:"أربعة",five:"خمسة",six:"ستة",seven:"سبعة",
+  eight:"ثمانية",nine:"تسعة",ten:"عشرة",eleven:"أحد عشر",twelve:"اثنا عشر",
+  twenty:"عشرون",thirty:"ثلاثون",forty:"أربعون",fifty:"خمسون",hundred:"مئة",
+  thousand:"ألف",million:"مليون",zero:"صفر",first:"أول",half:"نصف",quarter:"ربع",
+  and:"و",or:"أو",but:"لكن",not:"ليس",with:"مع",without:"بدون",for:"لـ",from:"من",
+  to:"إلى",in:"في",on:"على",at:"عند",by:"بواسطة",about:"حول",very:"جدا",too:"أيضا",
+  more:"أكثر",most:"الأكثر",less:"أقل",least:"الأقل",all:"كل",some:"بعض",none:"لا شيء",
+  both:"كلاهما",each:"كل واحد",other:"آخر",many:"كثير",much:"الكثير",few:"قليل",
+  several:"عدة",enough:"كافٍ",every:"كل",now:"الآن",then:"ثم",soon:"قريبا",
+  later:"لاحقا",always:"دائما",never:"أبدا",often:"غالبا",sometimes:"أحيانا",
+  usually:"عادة",only:"فقط",also:"كذلك",just:"للتو",again:"مرة أخرى",up:"أعلى",
+  down:"أسفل",out:"خارج",over:"فوق",under:"تحت",between:"بين",behind:"خلف",
+  before:"قبل",after:"بعد",because:"لأن",if:"إذا",so:"لذلك",the:"الـ",well:"جيدا",
+  left:"يسار",right:"يمين"
+};
+
+/* ---------- dialect-specific Arabic -> English (Egyptian + Levantine) ---------- */
+const AR_EXTRA = {
+  "عايز":"want","عاوز":"want","بدي":"want","بدك":"you want","بدنا":"we want",
+  "فين":"where","وين":"where","امتى":"when","ايمتى":"when","ليه":"why","ليش":"why",
+  "ازاي":"how","شلون":"how","كيفك":"how are you","ازيك":"how are you","عامل ايه":"how are you",
+  "كده":"like this","هيك":"like this","دلوقتي":"now","هلق":"now","هلأ":"now",
+  "النهارده":"today","بكره":"tomorrow","بكرا":"tomorrow","امبارح":"yesterday",
+  "مبارح":"yesterday","ايوه":"yes","اه":"yes","لأ":"no","مش":"not","مو":"not",
+  "كويس":"good","منيح":"good","حلو":"nice","وحش":"bad","خلاص":"done","معلش":"never mind",
+  "يلا":"come on","تعا":"come","عربيه":"car","موبايل":"phone","تلفون":"phone",
+  "فلوس":"money","مصاري":"money","شغل":"work","اكل":"food","مية":"water","مي":"water",
+  "عيش":"bread","راجل":"man","ست":"woman","مرا":"woman","ولاد":"kids","شويه":"a little",
+  "شوي":"a little","كتير":"a lot","اوي":"very","كمان":"also","بس":"only","عنجد":"really",
+  "يعني":"means","شو":"what","ايش":"what","معايا":"with me","معي":"with me",
+  "فيه":"there is","مافي":"there is not","مفيش":"there is not","عشان":"because",
+  "علشان":"because","بكام":"how much","قديش":"how much","انقذوني":"rescue me",
+  "حريق":"fire","اسعاف":"ambulance","نجده":"help","استغاثه":"sos","انتبه":"be careful"
+};
+
+/* ---------- whole-phrase translations (both directions) ---------- */
+const PH_EN2AR = {
+  "how are you":"كيف حالك","what is your name":"ما اسمك","my name is":"اسمي",
+  "i am fine":"أنا بخير","thank you":"شكرا لك","you are welcome":"على الرحب والسعة",
+  "i love you":"أحبك","good morning":"صباح الخير","good night":"تصبح على خير",
+  "good evening":"مساء الخير","see you later":"أراك لاحقا","i need help":"أحتاج مساعدة",
+  "call the police":"اتصلوا بالشرطة","i am injured":"أنا مصاب","send help":"أرسلوا المساعدة",
+  "need water":"أحتاج ماء","i am lost":"أنا تائه","help me":"ساعدوني","i am hungry":"أنا جائع",
+  "where is the hospital":"أين المستشفى","i do not understand":"لا أفهم",
+  "please wait":"انتظر من فضلك","what time is it":"كم الساعة","how much":"بكم",
+  "i am sorry":"أنا آسف","no problem":"لا مشكلة","let us go":"هيا بنا",
+  "be careful":"كن حذرا","stay safe":"ابق بأمان","sos":"نداء استغاثة","mayday":"استغاثة"
+};
+const PH_AR2EN = {
+  "كيف حالك":"how are you","كيف الحال":"how are you","شلونك":"how are you",
+  "عامل ايه":"how are you","ما اسمك":"what is your name","شو اسمك":"what is your name",
+  "اسمك ايه":"what is your name","انا بخير":"i am fine","الحمد لله":"thank god",
+  "شكرا لك":"thank you","على الرحب والسعة":"you are welcome","احبك":"i love you",
+  "صباح الخير":"good morning","مساء الخير":"good evening","تصبح على خير":"good night",
+  "اراك لاحقا":"see you later","احتاج مساعدة":"i need help","ساعدوني":"help me",
+  "النجدة":"help","اتصلوا بالشرطة":"call the police","انا مصاب":"i am injured",
+  "ارسلوا المساعدة":"send help","احتاج ماء":"need water","انا تائه":"i am lost",
+  "انا ضائع":"i am lost","انا جائع":"i am hungry","اين المستشفى":"where is the hospital",
+  "وين المستشفى":"where is the hospital","لا افهم":"i do not understand",
+  "مش فاهم":"i do not understand","انتظر من فضلك":"please wait","كم الساعة":"what time is it",
+  "بكم":"how much","بكام":"how much","قديش":"how much","انا اسف":"i am sorry",
+  "لا مشكلة":"no problem","مفيش مشكلة":"no problem","هيا بنا":"let us go","يلا":"let us go",
+  "كن حذرا":"be careful","ابق بامان":"stay safe","نداء استغاثة":"sos","استغاثة":"sos"
+};
+
+/* ---------- build lookup indices ---------- */
+const EN_KEYS = Object.keys(DICT);
+const AR2EN = {};
+for (const en in DICT){ const ar = normAr(DICT[en]); if(!(ar in AR2EN)) AR2EN[ar] = en; }
+for (const ar in AR_EXTRA){ AR2EN[normAr(ar)] = AR_EXTRA[ar]; }   /* dialect wins */
+const AR_KEYS = Object.keys(AR2EN);
+const PH_EN = {}; for (const k in PH_EN2AR) PH_EN[k.toLowerCase()] = PH_EN2AR[k];
+const PH_AR = {}; for (const k in PH_AR2EN) PH_AR[normAr(k)] = PH_AR2EN[k];
+
+function enToAr(word){
+  if (DICT[word]) return DICT[word];
+  const f = fuzzy(word, EN_KEYS);
+  return f ? DICT[f] : null;
+}
+function arToEnWord(word){
+  const w = normAr(word);
+  if (AR2EN[w]) return AR2EN[w];
+  const f = fuzzy(w, AR_KEYS);
+  return f ? AR2EN[f] : null;
+}
+
+/* ---------- translation helpers ---------- */
+function isArabic(s){ return /[\u0600-\u06FF]/.test(s); }
+
+function morseToText(morse){
+  let m = String(morse).replace(/•/g,".").replace(/[—–]/g,"-");
+  const words = m.trim().split(/\s*\/\s*|\s{3,}/);
+  return words.map(w =>
+    w.trim().split(/\s+/).filter(Boolean)
+     .map(code => REV_MORSE[code] !== undefined ? REV_MORSE[code] : "")
+     .join("")
+  ).join(" ").replace(/\s+/g," ").trim();
+}
+
+function textToLetters(text){
+  const out = [];
+  for (const ch of [...String(text)]){
+    if (ch === " " || ch === "\n" || ch === "\t"){ out.push({char:" ",morse:"/"}); continue; }
+    const up = ch.toUpperCase();
+    if (MORSE[up]) out.push({char:up, morse:MORSE[up]});
+    else out.push({char:ch, morse:""});
+  }
+  return out;
+}
+
+function lettersToMorse(letters){
+  return letters
+    .map(l => l.char === " " ? "/" : l.morse)
+    .filter(x => x !== "")
+    .join(" ").replace(/\s+/g," ").trim();
+}
+
+function translateToArabic(text){
+  const low = String(text).toLowerCase().trim();
+  if (!low) return "";
+  if (PH_EN[low]) return escapeHtml(PH_EN[low]);
+  return low.split(/\s+/).map(w => {
+    const c = w.replace(/[^a-z0-9']/g,"");
+    if (!c) return "";
+    if (/^\d+$/.test(c)) return c;
+    const hit = enToAr(c);
+    if (hit) return escapeHtml(hit);
+    return escapeHtml(c) + ' <span class="notrans">(لم يتم الترجمة)</span>';
+  }).filter(Boolean).join(" ");
+}
+/* alias kept for clarity at call sites */
+function enToArHtml(text){ return translateToArabic(text); }
+
+/* Arabic -> English. Returns {plain, display}.
+   plain   = English/Latin words only, fed to Morse (untranslated words dropped)
+   display = shown in the ENGLISH box; untranslated words shown with the label */
+function arToEn(text){
+  const t = String(text).trim();
+  if (!t) return { plain:"", display:"" };
+  const nt = normAr(t);
+  if (PH_AR[nt]){ const e = PH_AR[nt]; return { plain:e, display:e }; }
+  const plain = [], disp = [];
+  t.split(/\s+/).forEach(w => {
+    if (!isArabic(w)){
+      const ascii = w.replace(/[^A-Za-z0-9']/g,"");
+      if (ascii){ plain.push(ascii); disp.push(ascii); }
+      return;
+    }
+    const hit = arToEnWord(w);
+    if (hit){ plain.push(hit); disp.push(hit); return; }
+    const dig = normDigits(w).replace(/[^0-9]/g,"");
+    if (dig){ plain.push(dig); disp.push(dig); return; }
+    disp.push(w + " (لم يتم الترجمة)");
+  });
+  return { plain: plain.join(" ").trim(), display: disp.join(" ").trim() };
+}
+
+/* =====================================================================
+   DOM refs + helpers
+   ===================================================================== */
+const $ = id => document.getElementById(id);
+const statusbar = $("statusbar"), statusText = $("statusText");
+function setStatus(state){
+  statusbar.className = "statusbar" + (state==="ready"?"":" "+state);
+  statusText.textContent =
+    state==="listening" ? "● LISTENING" :
+    state==="tx"        ? "● TRANSMITTING" :
+    state==="err"       ? "● ERROR" : "● READY";
+}
+let toastTimer = null;
+function toast(msg, bad){
+  const t = $("toast");
+  t.textContent = msg; t.className = "toast show" + (bad?" bad":"");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=> t.className = "toast", 2200);
+}
+function showError(msg){ toast(msg, true); }
+
+async function copyText(t){
+  if (!t || t === "—") return;
+  try { await navigator.clipboard.writeText(t); toast("COPIED ✓"); }
+  catch(e){
+    const ta = document.createElement("textarea");
+    ta.value = t; ta.style.position="fixed"; ta.style.opacity="0";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); toast("COPIED ✓"); }
+    catch(_){ showError("COPY FAILED"); }
+    ta.remove();
+  }
+}
+
+/* ---------- triple-layer output ---------- */
+function renderTriple(prefix, morse, english, arabicHtml){
+  $(prefix+"-morse").textContent = morse || "—";
+  $(prefix+"-en").textContent = english || "—";
+  $(prefix+"-ar").innerHTML = arabicHtml || "—";
+}
+
+/* =====================================================================
+   TABS + sub-modes
+   ===================================================================== */
+document.querySelectorAll(".tab").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    document.querySelectorAll(".tab").forEach(b=>b.classList.remove("active"));
+    document.querySelectorAll(".panel").forEach(p=>p.classList.remove("active"));
+    btn.classList.add("active");
+    $("tab-"+btn.dataset.tab).classList.add("active");
+  });
+});
+document.querySelectorAll(".modebtn").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    if (btn.classList.contains("disabled")) return;
+    document.querySelectorAll(".modebtn").forEach(b=>b.classList.remove("active"));
+    document.querySelectorAll(".submode").forEach(s=>s.classList.remove("active"));
+    btn.classList.add("active");
+    $("mode-"+btn.dataset.mode).classList.add("active");
+    stopMic(); stopCam();
+  });
+});
+
+/* output-mode + SOS-method toggles */
+let encodeOut = "text";
+document.querySelectorAll(".outbtn").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    if (btn.classList.contains("disabled")) return;
+    document.querySelectorAll(".outbtn").forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active"); encodeOut = btn.dataset.out;
+    if (encodeOut === "light") refreshTorch();   /* probe torch on demand */
+  });
+});
+let sosMethod = "sound";
+document.querySelectorAll(".sosmethod").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    document.querySelectorAll(".sosmethod").forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active"); sosMethod = btn.dataset.method;
+  });
+});
+
+/* copy buttons */
+document.querySelectorAll(".copy").forEach(b=>{
+  b.addEventListener("click",()=> copyText($(b.dataset.copy).textContent));
+});
+
+/* =====================================================================
+   PERMISSIONS (camera / torch / microphone) — badges + Arabic messages
+   ===================================================================== */
+let torchUsable = null;                  /* null = unknown, true = ok, false = unusable */
+const PERM_MSG = {
+  cam:"نحتاج لولوج الكاميرا لاكتشاف الضوء",
+  torch:"نحتاج لمصباح الكاميرا لإرسال الضوء",
+  mic:"نحتاج لولوج المايكروفون للاستماع"
+};
+const PERM_HINT = "افتح إعدادات الموقع في المتصفح واسمح بالإذن — Allow in browser site settings";
+
+function setBadge(id, state){            /* state: 'ok' | 'no' | 'warn' */
+  const el = $(id); if(!el) return;
+  el.classList.remove("ok","no","warn");
+  el.classList.add(state);
+  el.textContent = state==="ok" ? "✓" : state==="no" ? "✗" : "⚠";
+  el.title = state==="ok" ? "granted" : state==="no" ? "denied" : "not requested";
+}
+function showPermMsg(id, kind, show){
+  const el = $(id); if(!el) return;
+  if(!show){ el.classList.add("hidden"); el.innerHTML = ""; return; }
+  el.classList.remove("hidden");
+  el.innerHTML = escapeHtml(PERM_MSG[kind]) +
+    '<br><span class="lnk" data-perm-help="1">⚙ ' + escapeHtml(PERM_HINT) + '</span>';
+}
+function modeBtnEl(mode){ return document.querySelector('.modebtn[data-mode="'+mode+'"]'); }
+function disableMode(mode){
+  const b = modeBtnEl(mode); if(!b) return;
+  b.classList.add("disabled");
+  if(b.classList.contains("active")){            /* fall back to TEXT mode */
+    const t = modeBtnEl("text"); if(t) t.click();
+  }
+}
+function enableMode(mode){
+  const b = modeBtnEl(mode); if(b) b.classList.remove("disabled");
+}
+
+/* settings-link tap → guidance (browsers can't deep-link to site settings) */
+document.addEventListener("click", e=>{
+  const t = e.target.closest("[data-perm-help]");
+  if(t) toast("Browser menu → Site settings → Permissions");
+});
+
+/* live permission state (no prompt) via Permissions API where supported */
+async function watchPerm(name, onState){
+  try {
+    if(navigator.permissions && navigator.permissions.query){
+      const st = await navigator.permissions.query({name});
+      onState(st.state);
+      st.onchange = ()=> onState(st.state);
+      return;
+    }
+  } catch(e){ /* unsupported name (e.g. iOS) */ }
+  onState("unsupported");
+}
+function applyMicPerm(state){
+  if(state==="granted"){ setBadge("micBadge","ok"); enableMode("mic"); showPermMsg("micPermMsg","mic",false); }
+  else if(state==="denied"){ setBadge("micBadge","no"); disableMode("mic"); showPermMsg("micPermMsg","mic",true); }
+  else { setBadge("micBadge","warn"); enableMode("mic"); showPermMsg("micPermMsg","mic",false); }
+}
+function applyCamPerm(state){
+  if(state==="granted"){ setBadge("camBadge","ok"); enableMode("cam"); showPermMsg("camPermMsg","cam",false); }
+  else if(state==="denied"){ setBadge("camBadge","no"); disableMode("cam"); showPermMsg("camPermMsg","cam",true); }
+  else { setBadge("camBadge","warn"); enableMode("cam"); showPermMsg("camPermMsg","cam",false); }
+}
+
+/* torch can't be queried via Permissions API — probe capabilities directly.
+   Returns 'ok' | 'denied' | 'unsupported'. */
+async function probeTorch(){
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return "unsupported";
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+  } catch(e){
+    return (e && (e.name==="NotAllowedError" || e.name==="SecurityError")) ? "denied" : "unsupported";
+  }
+  const track = stream.getVideoTracks()[0];
+  const caps = (track && track.getCapabilities) ? track.getCapabilities() : {};
+  const has = !!(caps && caps.torch);
+  stream.getTracks().forEach(t=>t.stop());
+  return has ? "ok" : "unsupported";
+}
+async function refreshTorch(){
+  const r = await probeTorch();
+  if(r==="ok"){ setBadge("torchBadge","ok"); showPermMsg("torchPermMsg","torch",false); torchUsable = true; }
+  else if(r==="denied"){ setBadge("torchBadge","no"); showPermMsg("torchPermMsg","torch",true); torchUsable = false; }
+  else {                                   /* unsupported (incl. iOS) → green pulse fallback */
+    setBadge("torchBadge","warn"); torchUsable = false;
+    const el = $("torchPermMsg");
+    if(el){ el.classList.remove("hidden"); el.classList.add("warn-box");
+      el.innerHTML = escapeHtml("لا يوجد مصباح — سيتم استخدام الوميض الأخضر / No torch — using green flash"); }
+  }
+}
+
+/* =====================================================================
+   SPEED + PITCH controls (shared)
+   ===================================================================== */
+const wpmEl = $("wpm"), wpmVal = $("wpmVal"), pitchEl = $("pitch"), pitchVal = $("pitchVal");
+function setWpm(v){ wpmEl.value = v; wpmVal.textContent = v; }
+wpmEl.addEventListener("input",()=> wpmVal.textContent = wpmEl.value);
+pitchEl.addEventListener("input",()=> pitchVal.textContent = pitchEl.value);
+document.querySelectorAll("[data-wpm]").forEach(b=>{
+  b.addEventListener("click",()=> setWpm(b.dataset.wpm));
+});
+const curWpm = () => parseInt(wpmEl.value,10) || 13;
+const curPitch = () => parseInt(pitchEl.value,10) || 600;
+$("outHint"); // keep ref
+
+/* =====================================================================
+   TRANSMIT ENGINE  (sound via WebAudio, light via torch/flash, synced UI)
+   ===================================================================== */
+const TX = { timers:[], ctx:null, osc:null, torchTrack:null, active:false };
+const visCircle = $("visualizer"), flashOv = $("flashOverlay"),
+      txOverlay = $("txOverlay"), nowPlaying = $("nowPlaying"), nowBig = $("nowBig");
+let flashMode = false;
+
+function setVisual(on){
+  visCircle.classList.toggle("on", on);
+  if (flashMode) flashOv.classList.toggle("on", on);
+}
+function showOverlay(){ txOverlay.classList.add("show"); }
+function hideOverlay(){
+  txOverlay.classList.remove("show");
+  flashOv.classList.remove("show","on");
+  visCircle.classList.remove("on");
+  flashMode = false;
+}
+
+async function setTorch(track, on){
+  if (!track) return;
+  try { await track.applyConstraints({advanced:[{torch:!!on}]}); } catch(e){}
+}
+async function getTorchTrack(){
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return null;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+    const track = stream.getVideoTracks()[0];
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if (!caps || !caps.torch){ stream.getTracks().forEach(t=>t.stop()); return null; }
+    return track;
+  } catch(e){ return null; }
+}
+
+/* build on/off timeline elements from aligned letters */
+function lettersToElements(letters, unit){
+  const els = [];
+  letters.forEach((L, idx)=>{
+    if (L.char === " "){ els.push({on:false, dur:7*unit}); return; }
+    const code = L.morse;
+    if (!code) return;
+    if (els.length && els[els.length-1].on) els.push({on:false, dur:3*unit});
+    for (let i=0;i<code.length;i++){
+      els.push({on:true, dur:(code[i]==="-"?3:1)*unit, charIndex: i===0?idx:undefined});
+      if (i < code.length-1) els.push({on:false, dur:1*unit});
+    }
+  });
+  let t=0;
+  els.forEach(e=>{ e.start=t; t+=e.dur; e.end=t; });
+  return els;
+}
+
+function renderNowPlaying(letters){
+  nowPlaying.innerHTML = letters.map((L,i)=>
+    `<span class="now-letter" data-i="${i}">${L.char===" "?"&nbsp;/&nbsp;":L.char}</span>`
+  ).join("");
+  nowBig.textContent = "—";
+}
+function highlightLetter(idx, letters){
+  nowPlaying.querySelectorAll(".now-letter.active").forEach(e=>e.classList.remove("active"));
+  const sp = nowPlaying.querySelector(`.now-letter[data-i="${idx}"]`);
+  if (sp){ sp.classList.add("active"); nowBig.textContent = sp.textContent.trim() || "·"; }
+}
+
+function stopTransmit(){
+  TX.timers.forEach(clearTimeout); TX.timers = [];
+  if (TX.osc){ try{TX.osc.stop();}catch(e){} TX.osc=null; }
+  if (TX.ctx){ try{TX.ctx.close();}catch(e){} TX.ctx=null; }
+  if (TX.torchTrack){
+    setTorch(TX.torchTrack,false);
+    try{ TX.torchTrack.stop(); }catch(e){}
+    TX.torchTrack=null;
+  }
+  setVisual(false); hideOverlay(); TX.active=false; setStatus("ready");
+}
+
+/* main transmit. text=string, opts={sound,light,repeat} */
+async function transmit(text, opts){
+  stopTransmit();
+  opts = opts || {};
+  let letters = textToLetters(text);
+  if (!letters.some(l=>l.morse)){ showError("NO TRANSMITTABLE CHARS"); return; }
+
+  if (opts.repeat && opts.repeat > 1){
+    let rep = [];
+    for (let r=0;r<opts.repeat;r++){
+      rep = rep.concat(letters);
+      if (r < opts.repeat-1) rep.push({char:" ",morse:"/"});
+    }
+    letters = rep;
+  }
+
+  const wpm = curWpm(), freq = curPitch(), unit = 1.2/wpm; // seconds
+  const els = lettersToElements(letters, unit);
+  if (!els.length) return;
+
+  renderNowPlaying(letters);
+  showOverlay();
+  TX.active = true; setStatus("tx");
+
+  /* light path */
+  let useTorch = false;
+  if (opts.light){
+    const tt = (torchUsable === false) ? null : await getTorchTrack();
+    if (tt){ TX.torchTrack = tt; useTorch = true; }
+    else { flashMode = true; flashOv.classList.add("show"); }   /* green pulse fallback */
+  }
+
+  /* audio path (sample-accurate scheduling) */
+  if (opts.sound){
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new Ctx();
+      await ctx.resume();
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = "sine"; osc.frequency.value = freq; gain.gain.value = 0;
+      osc.connect(gain); gain.connect(ctx.destination); osc.start();
+      const base = ctx.currentTime + 0.09;
+      els.forEach(e=>{
+        if (!e.on) return;
+        const s = base + e.start, en = base + e.end;
+        gain.gain.setValueAtTime(0.0001, s);
+        gain.gain.exponentialRampToValueAtTime(0.28, s + 0.006);
+        gain.gain.setValueAtTime(0.28, Math.max(s + 0.007, en - 0.006));
+        gain.gain.exponentialRampToValueAtTime(0.0001, en);
+      });
+      osc.stop(base + els[els.length-1].end + 0.05);
+      TX.ctx = ctx; TX.osc = osc;
+    } catch(e){ showError("AUDIO BLOCKED"); }
+  }
+
+  /* visual + torch + char timeline (wall-clock via setTimeout) */
+  els.forEach(e=>{
+    TX.timers.push(setTimeout(()=>{
+      setVisual(e.on);
+      if (useTorch) setTorch(TX.torchTrack, e.on);
+      if (e.charIndex !== undefined) highlightLetter(e.charIndex, letters);
+    }, e.start * 1000));
+  });
+  const endMs = els[els.length-1].end * 1000 + 120;
+  TX.timers.push(setTimeout(()=> stopTransmit(), endMs));
+}
+
+$("txClose").addEventListener("click", stopTransmit);
+flashOv.addEventListener("click", stopTransmit);
+
+/* =====================================================================
+   ENCODE
+   ===================================================================== */
+function buildEncode(raw){
+  let english, txText, arabicHtml, morse;
+  if (isArabic(raw)){
+    const r = arToEn(raw);
+    txText = r.plain;                 // English/Latin only -> Morse
+    english = r.display || "—";       // shown in ENGLISH box (untranslated words labelled)
+    arabicHtml = escapeHtml(raw.trim());
+    morse = lettersToMorse(textToLetters(txText));
+  } else {
+    english = raw.trim();
+    txText = english;
+    arabicHtml = translateToArabic(english);
+    morse = lettersToMorse(textToLetters(txText));
+  }
+  return { english, txText, arabicHtml, morse };
+}
+function escapeHtml(s){ const d=document.createElement("div"); d.textContent=s; return d.innerHTML; }
+
+function doEncodeDisplay(){
+  const raw = $("encInput").value;
+  if (!raw.trim()){ renderTriple("enc","—","—","—"); return null; }
+  const r = buildEncode(raw);
+  renderTriple("enc", r.morse, r.english, r.arabicHtml);
+  saveHistory("ENCODE", r.morse, r.english, stripTags(r.arabicHtml));
+  return r;
+}
+function stripTags(html){ const d=document.createElement("div"); d.innerHTML=html; return d.textContent; }
+
+$("encInput").addEventListener("input", ()=>{
+  // live preview without spamming history
+  const raw = $("encInput").value;
+  if (!raw.trim()){ renderTriple("enc","—","—","—"); return; }
+  const r = buildEncode(raw);
+  renderTriple("enc", r.morse, r.english, r.arabicHtml);
+});
+
+$("txBtn").addEventListener("click", ()=>{
+  const raw = $("encInput").value;
+  if (!raw.trim()){ showError("INPUT EMPTY"); return; }
+  const r = doEncodeDisplay();
+  if (!r) return;
+  if (encodeOut === "sound") transmit(r.txText, {sound:true});
+  else if (encodeOut === "light") transmit(r.txText, {light:true});
+  else toast("RENDERED ✓");
+});
+
+/* =====================================================================
+   DECODE — TEXT
+   ===================================================================== */
+$("decodeTextBtn").addEventListener("click", ()=>{
+  const raw = $("morseInput").value;
+  if (!raw.trim()){ showError("INPUT EMPTY"); return; }
+  const morse = raw.replace(/•/g,".").replace(/[—–]/g,"-").trim();
+  const english = morseToText(morse);
+  const arabicHtml = translateToArabic(english);
+  renderTriple("dec", morse, english, arabicHtml);
+  saveHistory("TEXT", morse, english, stripTags(arabicHtml));
+});
+$("clearDecodeBtn").addEventListener("click", ()=>{
+  $("morseInput").value = ""; renderTriple("dec","—","—","—");
+});
+
+function showDecodeResult(morse, mode){
+  const english = morseToText(morse);
+  const arabicHtml = translateToArabic(english);
+  renderTriple("dec", morse, english, arabicHtml);
+  saveHistory(mode, morse, english, stripTags(arabicHtml));
+  toast("DECODED ✓");
+}
+
+/* =====================================================================
+   SIGNAL DECODER (shared by mic + camera)
+   Converts on/off booleans (with timestamps in seconds) -> morse string,
+   with adaptive unit estimation, and auto-decode on silence.
+   ===================================================================== */
+class SignalDecoder {
+  constructor(onUpdate, onDecode){
+    this.onUpdate = onUpdate; this.onDecode = onDecode; this.reset();
+  }
+  reset(){
+    this.on = false; this.onStart = null; this.gapStart = null;
+    this.morse = ""; this.unit = 0.12; this.haveUnit = false;
+  }
+  update(isOn, now){
+    if (isOn !== this.on){
+      if (isOn){
+        if (this.gapStart !== null) this._gap(now - this.gapStart);
+        this.onStart = now;
+      } else {
+        if (this.onStart !== null) this._mark(now - this.onStart);
+        this.gapStart = now;
+      }
+      this.on = isOn;
+      if (this.onUpdate) this.onUpdate(this.morse + (isOn?"":""));
+    }
+  }
+  _mark(dur){
+    if (dur < 0.02) return; // ignore glitches
+    if (!this.haveUnit){ this.unit = Math.min(Math.max(dur,0.03),0.4); this.haveUnit = true; }
+    const isDot = dur < this.unit * 2;
+    this.unit = this.unit*0.7 + (isDot?dur:dur/3)*0.3;
+    this.unit = Math.min(Math.max(this.unit,0.03),0.5);
+    this.morse += isDot ? "." : "-";
+  }
+  _gap(gap){
+    if (gap < this.unit * 2) return;          // same letter
+    else if (gap < this.unit * 5) this.morse += " ";
+    else this.morse += " / ";
+  }
+  tick(now){
+    if (!this.on && this.gapStart !== null && this.morse.trim() !== ""){
+      const silence = now - this.gapStart;
+      if (silence > Math.max(this.unit * 9, 1.4)) this.finish();
+    }
+  }
+  finish(){
+    const m = this.morse.trim();
+    this.reset();
+    if (m && this.onDecode) this.onDecode(m);
+  }
+}
+
+/* =====================================================================
+   MIC decode
+   ===================================================================== */
+let micCtx=null, micStream=null, micAnalyser=null, micData=null, micRAF=null;
+const micDecoder = new SignalDecoder(
+  m => $("micRaw").textContent = m || "—",
+  m => { $("micRaw").textContent = m; showDecodeResult(m,"MIC"); }
+);
+const micCanvas = $("micCanvas"), micCtx2d = micCanvas.getContext("2d");
+$("sensMic").addEventListener("input", ()=>{
+  $("sensMicVal").textContent = (parseInt($("sensMic").value,10)/100).toFixed(2);
+});
+
+async function startMic(){
+  if (micStream) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    setBadge("micBadge","no"); showPermMsg("micPermMsg","mic",true);
+    showError("MIC API UNAVAILABLE — SERVE OVER HTTPS"); return;
+  }
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+    setBadge("micBadge","ok"); showPermMsg("micPermMsg","mic",false);
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    micCtx = new Ctx();
+    const src = micCtx.createMediaStreamSource(micStream);
+    micAnalyser = micCtx.createAnalyser();
+    micAnalyser.fftSize = 1024;
+    micData = new Uint8Array(micAnalyser.fftSize);
+    src.connect(micAnalyser);
+    micDecoder.reset();
+    setStatus("listening");
+    loopMic();
+  } catch(e){
+    if (e && (e.name==="NotAllowedError" || e.name==="SecurityError")){
+      setBadge("micBadge","no"); showPermMsg("micPermMsg","mic",true); disableMode("mic");
+      showError("MIC PERMISSION DENIED");
+    } else { showError("MIC UNAVAILABLE"); }
+    console.warn(e);
+  }
+}
+function loopMic(){
+  micAnalyser.getByteTimeDomainData(micData);
+  let sum=0;
+  for (let i=0;i<micData.length;i++){ const v=(micData[i]-128)/128; sum+=v*v; }
+  const rms = Math.sqrt(sum/micData.length);          // 0..~1
+  const thr = parseInt($("sensMic").value,10)/100;
+  const isOn = rms > thr;
+  const now = micCtx.currentTime;
+  micDecoder.update(isOn, now);
+  micDecoder.tick(now);
+
+  // meter
+  const pct = Math.min(100, rms*350);
+  $("micFill").style.width = pct + "%";
+  $("micMeter").classList.toggle("over", isOn);
+
+  // waveform
+  const w=micCanvas.width, h=micCanvas.height;
+  micCtx2d.fillStyle="#010801"; micCtx2d.fillRect(0,0,w,h);
+  micCtx2d.strokeStyle = isOn ? "#00ff41" : "#00aa2b";
+  micCtx2d.lineWidth = 2; micCtx2d.beginPath();
+  const step = w / micData.length;
+  for (let i=0;i<micData.length;i++){
+    const y = (micData[i]/255)*h;
+    if (i===0) micCtx2d.moveTo(0,y); else micCtx2d.lineTo(i*step,y);
+  }
+  micCtx2d.stroke();
+  // threshold line
+  micCtx2d.strokeStyle="rgba(255,176,0,.5)"; micCtx2d.lineWidth=1;
+  micCtx2d.beginPath();
+  const ty = h/2 - thr*128/128*(h/2);
+  micCtx2d.moveTo(0,ty); micCtx2d.lineTo(w,ty); micCtx2d.stroke();
+
+  micRAF = requestAnimationFrame(loopMic);
+}
+function stopMic(){
+  if (micRAF) cancelAnimationFrame(micRAF); micRAF=null;
+  if (micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
+  if (micCtx){ try{micCtx.close();}catch(e){} micCtx=null; }
+  micAnalyser=null;
+  if (statusbar.classList.contains("listening")) setStatus("ready");
+}
+$("micStart").addEventListener("click", startMic);
+$("micStop").addEventListener("click", ()=>{ micDecoder.finish(); stopMic(); });
+$("micDecode").addEventListener("click", ()=> micDecoder.finish());
+
+/* =====================================================================
+   CAMERA decode
+   ===================================================================== */
+let camStream=null, camRAF=null, camLast=0;
+const camVideo=$("camVideo"), camCanvas=$("camCanvas"), camCtx2d=camCanvas.getContext("2d",{willReadFrequently:true});
+const camDecoder = new SignalDecoder(
+  m => $("camRaw").textContent = m || "—",
+  m => { $("camRaw").textContent = m; showDecodeResult(m,"CAM"); }
+);
+$("sensCam").addEventListener("input", ()=>{
+  $("sensCamVal").textContent = (parseInt($("sensCam").value,10)/100).toFixed(2);
+});
+
+async function startCam(){
+  if (camStream) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    setBadge("camBadge","no"); showPermMsg("camPermMsg","cam",true);
+    showError("CAMERA API UNAVAILABLE — SERVE OVER HTTPS"); return;
+  }
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+    setBadge("camBadge","ok"); showPermMsg("camPermMsg","cam",false);
+    camVideo.srcObject = camStream;
+    await camVideo.play();
+    camDecoder.reset();
+    setStatus("listening");
+    camLast = performance.now()/1000;
+    loopCam();
+  } catch(e){
+    if (e && (e.name==="NotAllowedError" || e.name==="SecurityError")){
+      setBadge("camBadge","no"); showPermMsg("camPermMsg","cam",true); disableMode("cam");
+      showError("CAMERA PERMISSION DENIED");
+    } else { showError("CAMERA UNAVAILABLE"); }
+    console.warn(e);
+  }
+}
+function loopCam(){
+  const now = performance.now()/1000;
+  if (camVideo.readyState >= 2){
+    camCtx2d.drawImage(camVideo,0,0,camCanvas.width,camCanvas.height);
+    const d = camCtx2d.getImageData(0,0,camCanvas.width,camCanvas.height).data;
+    let sum=0;
+    for (let i=0;i<d.length;i+=4){
+      sum += 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+    }
+    const bright = (sum/(d.length/4))/255;            // 0..1
+    const thr = parseInt($("sensCam").value,10)/100;
+    const isOn = bright > thr;
+    camDecoder.update(isOn, now);
+    camDecoder.tick(now);
+    $("camFill").style.width = Math.min(100,bright*100) + "%";
+    $("camMeter").classList.toggle("over", isOn);
+    camVideo.style.outline = isOn ? "3px solid #00ff41" : "none";
+  }
+  camRAF = requestAnimationFrame(loopCam);
+}
+function stopCam(){
+  if (camRAF) cancelAnimationFrame(camRAF); camRAF=null;
+  if (camStream){ camStream.getTracks().forEach(t=>t.stop()); camStream=null; }
+  camVideo.srcObject=null; camVideo.style.outline="none";
+  if (statusbar.classList.contains("listening")) setStatus("ready");
+}
+$("camStart").addEventListener("click", startCam);
+$("camStop").addEventListener("click", ()=>{ camDecoder.finish(); stopCam(); });
+$("camDecode").addEventListener("click", ()=> camDecoder.finish());
+
+/* =====================================================================
+   HISTORY (localStorage, last 50)
+   ===================================================================== */
+const HKEY = "morse_terminal_history_v1";
+function loadHistory(){
+  try { return JSON.parse(localStorage.getItem(HKEY)||"[]"); } catch(e){ return []; }
+}
+function saveHistory(mode, morse, en, ar){
+  if (!morse && !en) return;
+  let h = loadHistory();
+  h.unshift({ ts:Date.now(), mode, morse, en, ar });
+  h = h.slice(0,50);
+  try { localStorage.setItem(HKEY, JSON.stringify(h)); } catch(e){}
+  renderHistory();
+}
+function renderHistory(){
+  const h = loadHistory(); const box = $("historyLog");
+  if (!h.length){ box.innerHTML = '<div class="empty">// LOG EMPTY //</div>'; return; }
+  box.innerHTML = h.map((e,i)=>{
+    const d = new Date(e.ts);
+    const ts = d.toLocaleDateString() + " " +
+      d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+    return `<div class="logentry" data-i="${i}">
+      <div class="top"><span>[${e.mode||"?"}]</span><span>${ts}</span></div>
+      <div class="lm">${escapeHtml(e.morse||"")}</div>
+      <div class="le">${escapeHtml(e.en||"")}</div>
+      <div class="la">${escapeHtml(e.ar||"")}</div>
+    </div>`;
+  }).join("");
+  box.querySelectorAll(".logentry").forEach(el=>{
+    el.addEventListener("click",()=>{
+      const e = loadHistory()[parseInt(el.dataset.i,10)];
+      if (!e) return;
+      // reload into the relevant input
+      if (e.mode === "ENCODE"){
+        $("encInput").value = e.en || "";
+        document.querySelector('.tab[data-tab="encode"]').click();
+        $("encInput").dispatchEvent(new Event("input"));
+      } else {
+        document.querySelector('.tab[data-tab="decode"]').click();
+        document.querySelector('.modebtn[data-mode="text"]').click();
+        $("morseInput").value = e.morse || "";
+        $("decodeTextBtn").click();
+      }
+      toast("LOADED ✓");
+    });
+  });
+}
+$("clearHistory").addEventListener("click", ()=>{
+  if (confirm("Clear the entire translation log?")){
+    try { localStorage.removeItem(HKEY); } catch(e){}
+    renderHistory(); toast("LOG CLEARED");
+  }
+});
+
+/* =====================================================================
+   SOS
+   ===================================================================== */
+const SOS_PHRASES = ["SOS","HELP","NEED WATER","SEND HELP","I AM INJURED","CALL POLICE","SEND RESCUE"];
+$("sosGrid").innerHTML = SOS_PHRASES.map(p =>
+  `<button class="sosbtn" data-p="${p}">${p}</button>`).join("");
+function txSos(text){
+  const opts = sosMethod === "light" ? {light:true} : {sound:true};
+  if (text.toUpperCase() === "SOS") opts.repeat = 3;
+  // also log it
+  const morse = lettersToMorse(textToLetters(text));
+  saveHistory("SOS", morse, text, stripTags(translateToArabic(text)));
+  transmit(text, opts);
+}
+$("sosGrid").querySelectorAll(".sosbtn").forEach(b=>{
+  b.addEventListener("click",()=> txSos(b.dataset.p));
+});
+$("sosBig").addEventListener("click", ()=> txSos("SOS"));
+$("sosTransmit").addEventListener("click", ()=>{
+  const v = $("sosCustom").value.trim();
+  if (!v){ showError("MESSAGE EMPTY"); return; }
+  let text = v;
+  if (isArabic(v)){
+    text = arToEn(v).plain;
+    if (!text){ showError("NO TRANSLATABLE WORDS"); return; }
+  }
+  txSos(text);
+});
+
+/* =====================================================================
+   MORSE REFERENCE
+   ===================================================================== */
+(function buildRef(){
+  const order = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
+  $("refGrid").innerHTML = order.map(c =>
+    `<div class="refcell"><div class="c">${c}</div><div class="m">${MORSE[c]}</div></div>`
+  ).join("");
+})();
+$("refToggle").addEventListener("click", ()=>{
+  const g = $("refGrid"); g.classList.toggle("hidden");
+  $("refToggle").textContent = g.classList.contains("hidden")
+    ? "▸ MORSE REFERENCE [ TAP ]" : "▾ MORSE REFERENCE [ TAP ]";
+});
+
+/* =====================================================================
+   PWA: manifest (data URI) + service worker (blob) + install + share
+   ===================================================================== */
+(function pwaSetup(){
+  const icon =
+    "data:image/svg+xml;utf8," + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512">' +
+      '<rect width="512" height="512" fill="#000"/>' +
+      '<rect x="24" y="24" width="464" height="464" rx="40" fill="none" stroke="#00ff41" stroke-width="10"/>' +
+      '<text x="256" y="300" font-family="monospace" font-size="150" fill="#00ff41" ' +
+      'text-anchor="middle" font-weight="bold">M</text>' +
+      '<text x="256" y="400" font-family="monospace" font-size="90" fill="#00ff41" ' +
+      'text-anchor="middle">.&#8212;</text></svg>'
+    );
+  /* manifest is now a static file (manifest.json) linked in <head> */
+  const apple = document.createElement("link");
+  apple.rel = "apple-touch-icon"; apple.href = icon;
+  document.head.appendChild(apple);
+
+  // service worker (cache-on-install, offline-first) via Blob URL
+  if ("serviceWorker" in navigator && location.protocol !== "file:"){
+    const sw = `
+      const C="morse-terminal-v1";
+      self.addEventListener("install",e=>{self.skipWaiting();});
+      self.addEventListener("activate",e=>{e.waitUntil(self.clients.claim());});
+      self.addEventListener("fetch",e=>{
+        e.respondWith(
+          caches.match(e.request).then(r=> r || fetch(e.request).then(resp=>{
+            const cp=resp.clone();
+            caches.open(C).then(c=>{ try{c.put(e.request,cp);}catch(_){} });
+            return resp;
+          }).catch(()=>caches.match("./")))
+        );
+      });`;
+    try {
+      const url = URL.createObjectURL(new Blob([sw],{type:"application/javascript"}));
+      navigator.serviceWorker.register(url).catch(()=>{});
+    } catch(e){}
+  }
+})();
+
+/* install prompt */
+let deferredPrompt = null;
+window.addEventListener("beforeinstallprompt", e=>{
+  e.preventDefault(); deferredPrompt = e;
+});
+$("installBtn").addEventListener("click", async ()=>{
+  if (deferredPrompt){
+    deferredPrompt.prompt();
+    try { await deferredPrompt.userChoice; } catch(e){}
+    deferredPrompt = null;
+  } else if (window.matchMedia("(display-mode: standalone)").matches){
+    toast("ALREADY INSTALLED ✓");
+  } else {
+    toast("Use browser menu → Add to Home Screen");
+  }
+});
+
+/* share — shares a copy of this very HTML file (works offline) */
+$("shareBtn").addEventListener("click", async ()=>{
+  try {
+    const html = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
+    const file = new File([html], "morse-terminal.html", {type:"text/html"});
+    if (navigator.canShare && navigator.canShare({files:[file]})){
+      await navigator.share({files:[file], title:"MORSE TERMINAL"});
+    } else if (navigator.share){
+      await navigator.share({title:"MORSE TERMINAL", text:"Offline Morse Code Terminal"});
+    } else {
+      const url = URL.createObjectURL(file);
+      const a = document.createElement("a");
+      a.href = url; a.download = "morse-terminal.html"; a.click();
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+      toast("DOWNLOADED COPY ✓");
+    }
+  } catch(e){ /* user cancelled */ }
+});
+
+/* =====================================================================
+   INIT
+   ===================================================================== */
+renderHistory();
+setStatus("ready");
+$("sensMicVal").textContent = (parseInt($("sensMic").value,10)/100).toFixed(2);
+$("sensCamVal").textContent = (parseInt($("sensCam").value,10)/100).toFixed(2);
+
+/* permission badges (mic + camera) — passive, no prompt on load */
+watchPerm("microphone", applyMicPerm);
+watchPerm("camera", applyCamPerm);
+/* torch stays ⚠ until LIGHT output is selected (then probed on demand) */
+
+/* manifest shortcuts: ?tab=decode|encode|sos (and #tab) open the right tab */
+(function deepLinkTab(){
+  let tab = null;
+  try { tab = new URLSearchParams(location.search).get("tab"); } catch(e){}
+  if (!tab && location.hash) tab = location.hash.replace(/^#/, "");
+  if (!tab) return;
+  const btn = document.querySelector('.tab[data-tab="'+tab.toLowerCase()+'"]');
+  if (btn) btn.click();
+})();
+
+window.addEventListener("pagehide", ()=>{ stopMic(); stopCam(); stopTransmit(); });
+</script>
+</body>
+</html>
